@@ -3,6 +3,8 @@ package spacebattle
 import "fmt"
 
 // RotatingObject exposes only the state needed for discrete rotation.
+//
+//go:generate go run ./cmd/adaptergen -type RotatingObject -output rotating_object_adapter_gen.go
 type RotatingObject interface {
 	Direction() (Direction, error)
 	AngularVelocity() (int, error)

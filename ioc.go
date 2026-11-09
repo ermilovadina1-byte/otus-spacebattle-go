@@ -22,10 +22,18 @@ var (
 // Factory builds a dependency from the arguments supplied to Resolve.
 type Factory func(args ...any) (any, error)
 
+// ContextFactory also receives the container and the session of this Resolve call.
+type ContextFactory func(ioc *IoC, session *ScopeSession, args ...any) (any, error)
+
+type dependencyFactory struct {
+	plain      Factory
+	contextual ContextFactory
+}
+
 type dependencyScope struct {
 	parent    *dependencyScope
 	mu        sync.RWMutex
-	factories map[string]Factory
+	factories map[string]dependencyFactory
 }
 
 // IoC holds the shared registration graph. Its only public operation is Resolve.
@@ -36,7 +44,7 @@ type IoC struct {
 }
 
 func NewIoC() *IoC {
-	root := &dependencyScope{factories: make(map[string]Factory)}
+	root := &dependencyScope{factories: make(map[string]dependencyFactory)}
 	return &IoC{root: root, scopes: map[string]*dependencyScope{"root": root}}
 }
 
@@ -89,16 +97,20 @@ func resolveDependency(ioc *IoC, session *ScopeSession, key string, args []any) 
 		if !ok || name == "" {
 			return nil, ErrInvalidArguments
 		}
-		var factory Factory
+		var factory dependencyFactory
 		switch f := args[1].(type) {
 		case Factory:
-			factory = f
+			factory.plain = f
 		case func(...any) (any, error):
-			factory = Factory(f)
+			factory.plain = Factory(f)
+		case ContextFactory:
+			factory.contextual = f
+		case func(*IoC, *ScopeSession, ...any) (any, error):
+			factory.contextual = ContextFactory(f)
 		default:
 			return nil, ErrInvalidArguments
 		}
-		if factory == nil {
+		if factory.plain == nil && factory.contextual == nil {
 			return nil, ErrInvalidArguments
 		}
 		if reservedIoCKey(name) {
@@ -131,7 +143,13 @@ func resolveDependency(ioc *IoC, session *ScopeSession, key string, args []any) 
 		factory, ok := scope.factories[key]
 		scope.mu.RUnlock()
 		if ok {
-			value, err := factory(args...)
+			var value any
+			var err error
+			if factory.contextual != nil {
+				value, err = factory.contextual(ioc, session, args...)
+			} else {
+				value, err = factory.plain(args...)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("resolve %q: %w", key, err)
 			}
