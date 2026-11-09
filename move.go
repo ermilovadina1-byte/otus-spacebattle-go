@@ -8,6 +8,8 @@ import (
 var ErrNilObject = errors.New("game object is nil")
 
 // MovingObject exposes only the state needed for straight uniform movement.
+//
+//go:generate go run ./cmd/adaptergen -type MovingObject -output moving_object_adapter_gen.go
 type MovingObject interface {
 	Position() (Vector, error)
 	Velocity() (Vector, error)

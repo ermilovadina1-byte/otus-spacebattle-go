@@ -4,7 +4,7 @@ type registerDependency struct {
 	container *IoC
 	session   *ScopeSession
 	key       string
-	factory   Factory
+	factory   dependencyFactory
 }
 
 func (command *registerDependency) Execute() error {
@@ -33,7 +33,7 @@ func (command *createScope) Execute() error {
 	}
 	command.container.scopes[command.name] = &dependencyScope{
 		parent:    parent,
-		factories: make(map[string]Factory),
+		factories: make(map[string]dependencyFactory),
 	}
 	return nil
 }
