@@ -18,18 +18,20 @@ type WorkerFailure struct {
 	Err     error
 }
 
-// CommandWorker owns a FIFO queue and executes its commands in one goroutine.
+// CommandWorker owns a FIFO intake queue and executes commands in one goroutine.
+// Follow-up work from the current command runs before the next intake item.
 // Different workers have independent queues. Create it with NewCommandWorker.
 type CommandWorker struct {
-	mu       sync.Mutex
-	ready    *sync.Cond
-	queue    []Command
-	started  bool
-	draining bool
-	halted   bool
-	failures []WorkerFailure
-	startCh  chan struct{}
-	doneCh   chan struct{}
+	mu        sync.Mutex
+	ready     *sync.Cond
+	queue     []Command
+	followUps []Command
+	started   bool
+	draining  bool
+	halted    bool
+	failures  []WorkerFailure
+	startCh   chan struct{}
+	doneCh    chan struct{}
 }
 
 func NewCommandWorker() *CommandWorker {
@@ -55,6 +57,25 @@ func (w *CommandWorker) Enqueue(command Command) error {
 		return ErrWorkerClosed
 	}
 	w.queue = append(w.queue, command)
+	w.ready.Signal()
+	return nil
+}
+
+// enqueueFollowUp adds work created by an already accepted command. SoftStop
+// still processes that work, while HardStop rejects it with the pending queue.
+func (w *CommandWorker) enqueueFollowUp(command Command) error {
+	if w == nil {
+		return ErrNilWorker
+	}
+	if command == nil {
+		return ErrNilCommand
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.halted {
+		return ErrWorkerClosed
+	}
+	w.followUps = append(w.followUps, command)
 	w.ready.Signal()
 	return nil
 }
@@ -90,6 +111,10 @@ func (w *CommandWorker) HardStop() error {
 		w.queue[i] = nil
 	}
 	w.queue = nil
+	for i := range w.followUps {
+		w.followUps[i] = nil
+	}
+	w.followUps = nil
 	w.ready.Broadcast()
 	return nil
 }
@@ -127,16 +152,23 @@ func (w *CommandWorker) run() {
 	defer close(w.doneCh)
 	for {
 		w.mu.Lock()
-		for len(w.queue) == 0 && !w.draining && !w.halted {
+		for len(w.queue) == 0 && len(w.followUps) == 0 && !w.draining && !w.halted {
 			w.ready.Wait()
 		}
-		if w.halted || (w.draining && len(w.queue) == 0) {
+		if w.halted || (w.draining && len(w.queue) == 0 && len(w.followUps) == 0) {
 			w.mu.Unlock()
 			return
 		}
-		command := w.queue[0]
-		w.queue[0] = nil
-		w.queue = w.queue[1:]
+		var command Command
+		if len(w.followUps) > 0 {
+			command = w.followUps[0]
+			w.followUps[0] = nil
+			w.followUps = w.followUps[1:]
+		} else {
+			command = w.queue[0]
+			w.queue[0] = nil
+			w.queue = w.queue[1:]
+		}
 		w.mu.Unlock()
 
 		if err := executeSafely(command); err != nil {
