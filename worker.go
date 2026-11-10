@@ -30,12 +30,14 @@ type CommandWorker struct {
 	draining  bool
 	halted    bool
 	failures  []WorkerFailure
+	state     workerState // only the worker goroutine reads and changes this field
 	startCh   chan struct{}
 	doneCh    chan struct{}
 }
 
 func NewCommandWorker() *CommandWorker {
 	w := &CommandWorker{
+		state:   &runningState{},
 		startCh: make(chan struct{}),
 		doneCh:  make(chan struct{}),
 	}
@@ -171,11 +173,17 @@ func (w *CommandWorker) run() {
 		}
 		w.mu.Unlock()
 
-		if err := executeSafely(command); err != nil {
+		next, err := w.state.handle(w, command)
+		if err != nil {
 			w.mu.Lock()
 			w.failures = append(w.failures, WorkerFailure{Command: command, Err: err})
 			w.mu.Unlock()
 		}
+		if next == nil {
+			_ = w.HardStop()
+			return
+		}
+		w.state = next
 	}
 }
 
