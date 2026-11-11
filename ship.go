@@ -50,6 +50,19 @@ func (s *Ship) SetPosition(position Vector) error {
 	return nil
 }
 
+// SetSpeed changes the scalar speed used by subsequent Move commands.
+// Zero stops movement without changing the ship's heading.
+func (s *Ship) SetSpeed(speed float64) error {
+	if s == nil {
+		return ErrNilObject
+	}
+	if !finite(speed) || speed < 0 {
+		return ErrInvalidSpeed
+	}
+	s.speed = speed
+	return nil
+}
+
 func (s *Ship) Direction() (Direction, error) {
 	return s.direction, nil
 }
